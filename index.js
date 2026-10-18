@@ -493,7 +493,7 @@ export function createGuard(ctx, options, log) {
         mode: 'queue',
         content: [{ type: 'text', text: phrase }],
       },
-      undefined,
+      new AbortController().signal,
     )
   }
 
@@ -785,6 +785,33 @@ export function createGuard(ctx, options, log) {
                 peakNow === true &&
                 tokens >= options.blockTokens,
             })
+            return
+          }
+          if (route === '/prompt-probe' && request.method === 'POST') {
+            const controller = ctx.get('sessionController')
+            if (controller?.prompt === undefined) {
+              sendJson(response, 200, { available: false })
+              return
+            }
+            try {
+              await controller.prompt(
+                {
+                  requestId: randomUUID(),
+                  sessionId: 'peak-guard-probe-does-not-exist',
+                  mode: 'queue',
+                  content: [{ type: 'text', text: 'probe' }],
+                },
+                new AbortController().signal,
+              )
+              sendJson(response, 200, { available: true, accepted: true })
+            } catch (error) {
+              sendJson(response, 200, {
+                available: true,
+                accepted: false,
+                code: error?.code ?? null,
+                message: String(error?.message ?? error),
+              })
+            }
             return
           }
           sendJson(response, 404, { error: 'not-found' })
