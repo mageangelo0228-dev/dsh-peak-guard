@@ -1,5 +1,7 @@
 # dsh-peak-guard
 
+> ⚠️ **Not fully tested yet** (version `0.0.1`). Verify it yourself before relying on it.
+
 Peak/off-peak price guard for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness):
 
 1. **Reminder 30 minutes before peak pricing** — evaluated against each provider's own clock.

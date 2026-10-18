@@ -3,7 +3,9 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [0.1.0] - 2026-10-19
+## [0.0.1] - 2026-10-19
+
+> ⚠️ **功能未经过充分测试。** 版本号改成 `0.1.1` 时删除本提示。
 
 ### 新增
 
