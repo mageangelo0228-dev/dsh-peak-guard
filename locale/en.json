@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Peak Price Guard",
+    "description": "Reminds you 30 minutes before peak pricing, sends each workspace's wrap-up phrase exactly once after all its sessions are idle, and blocks over-long conversations during peak hours."
+  }
+}

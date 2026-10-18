@@ -1,0 +1,37 @@
+# dsh-peak-guard bundle patch.
+#
+# One registration path only: this row is inserted by the bundle layer. Do not
+# also add a manual `- insert: [id: peak-guard, ...]` row to the profile's own
+# cordis.patch.yml, or boot fails with `duplicate loader entry id: peak-guard`.
+#
+# All values below are the defaults; override them in the profile patch by
+# targeting this id (a matching override replaces the complete `config`).
+- insert:
+    - id: peak-guard
+      name: 'dsh-peak-guard'
+      config:
+        # Master switch. Turn it off to keep the plugin loaded but silent.
+        enabled: true
+        # Emit the "peak starts soon" reminder this many minutes before peak.
+        leadMinutes: 30
+        # Once the reminder fired, re-check whether a turn is still running
+        # after this many minutes.
+        recheckMinutes: 5
+        # Countdown shown when the re-check still finds a running turn.
+        confirmMinutes: 10
+        # Auto wrap-up phrase, sent as a user message once every top-level
+        # session in that workspace is idle.
+        wrapPhrase: '今天先到这里，现在收工'
+        # Block a conversation during peak hours once its cumulative token
+        # usage reaches this threshold.
+        blockTokens: 2000000
+        # Blocking is a separate switch; off means "remind only".
+        blockLongConversations: false
+        # Clock offset in minutes, used to dry-run the whole state machine
+        # without waiting for real peak hours. 0 = real clock.
+        clockOffsetMinutes: 0
+        # Catalog profile ids this guard watches. The first id found in the
+        # dsh-peakrate catalog wins; `deepseek-v4` is the DeepSeek API clock
+        # (Beijing 09:00-12:00 and 14:00-18:00 on weekdays).
+        profileIds:
+          - deepseek-v4

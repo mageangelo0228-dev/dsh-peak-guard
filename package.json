@@ -1,0 +1,63 @@
+{
+  "name": "dsh-peak-guard",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Peak-price guard for DeepSeek Harness: remind before peak pricing, auto-send the workspace wrap-up phrase once every session there is idle, and block over-long conversations during peak hours.",
+  "main": "index.js",
+  "icon": "icon.svg",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.zh.md",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "peak",
+    "off-peak",
+    "pricing",
+    "reminder",
+    "token-budget"
+  ],
+  "license": "MIT",
+  "author": "mageangelo0228-dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mageangelo0228-dev/dsh-peak-guard.git"
+  },
+  "homepage": "https://github.com/mageangelo0228-dev/dsh-peak-guard",
+  "bugs": {
+    "url": "https://github.com/mageangelo0228-dev/dsh-peak-guard/issues"
+  },
+  "scripts": {
+    "test": "node --test test/schedule.test.mjs test/guard.test.mjs"
+  }
+}
