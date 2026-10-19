@@ -17,9 +17,9 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 const MINUTE = 60_000
 const HOUR = 60 * MINUTE
@@ -37,6 +37,7 @@ export const DEFAULTS = Object.freeze({
   blockLongConversations: false,
   clockOffsetMinutes: 0,
   profileIds: ['deepseek-v4'],
+  history: true,
 })
 
 const NUMBER_FIELDS = Object.freeze([
@@ -87,6 +88,7 @@ export function readOptions(config = {}) {
   for (const key of NUMBER_FIELDS) options[key] = pickNumber(raw, key, DEFAULTS[key])
   options.wrapPhrase = pickString(raw, 'wrapPhrase', DEFAULTS.wrapPhrase)
   options.profileIds = pickStrings(raw, 'profileIds', DEFAULTS.profileIds)
+  options.history = pickBoolean(raw, 'history', DEFAULTS.history)
   return /** @type {typeof DEFAULTS} */ (options)
 }
 
@@ -361,6 +363,11 @@ function isTopLevel(session) {
   return session?.header?.origin !== 'subagent'
 }
 
+function resolveHistoryPath() {
+  const home = process.env.DSH_HOME ?? join(homedir(), '.dsh')
+  return join(home, 'peak-guard', 'events.jsonl')
+}
+
 /**
  * Build one guard runtime. Exported so tests can drive the state machine with a
  * fake context and a simulated clock instead of installing the bundle.
@@ -377,6 +384,49 @@ export function createGuard(ctx, options, log) {
   let timer
 
   const now = () => Date.now() + clock.offsetMinutes * MINUTE
+
+  const historyPath = options.history === false ? null : resolveHistoryPath()
+
+  /** Append one audit line; logging must never break the guard. */
+  function record(type, data = {}) {
+    if (historyPath === null) return
+    try {
+      mkdirSync(dirname(historyPath), { recursive: true })
+      if (statSync(historyPath, { throwIfNoEntry: false })?.size > 512 * 1024) {
+        // keep the log bounded: rotate once, keep the previous file
+        try {
+          const previous = readFileSync(historyPath, 'utf8').split('\n').slice(-1000).join('\n')
+          appendFileSync(`${historyPath}.1`, previous, 'utf8')
+        } catch {
+          // ignore rotation failures
+        }
+        appendFileSync(historyPath, '', 'utf8')
+      }
+      appendFileSync(
+        historyPath,
+        `${JSON.stringify({ at: new Date(now()).toISOString(), type, ...data })}\n`,
+        'utf8',
+      )
+    } catch {
+      // never break the guard for a log line
+    }
+  }
+
+  function historyItems(limit) {
+    if (historyPath === null) return []
+    try {
+      const lines = readFileSync(historyPath, 'utf8').split('\n').filter(Boolean)
+      return lines.slice(-limit).map((line) => {
+        try {
+          return JSON.parse(line)
+        } catch {
+          return { raw: line }
+        }
+      })
+    } catch {
+      return []
+    }
+  }
 
   function refreshProfile() {
     const profiles = loadProfiles(ctx)
@@ -481,6 +531,7 @@ export function createGuard(ctx, options, log) {
     const tokens = cumulativeTokens(session)
     if (tokens < options.blockTokens) return false
     lastBlock = { sessionId: agent.id, tokens, at: new Date(at).toISOString() }
+    record('blocked', { sessionId: agent.id, tokens })
     return true
   }
 
@@ -514,6 +565,10 @@ export function createGuard(ctx, options, log) {
       `[lead] peak starts at ${new Date(peakAt).toISOString()} — banner stays until then, ` +
         `run check every ${options.recheckMinutes} minute(s)`,
     )
+    record('occurrence-start', {
+      peakAt: new Date(peakAt).toISOString(),
+      running: runningEntries().map((entry) => ({ id: entry.id, cwd: entry.cwd })),
+    })
   }
 
   async function tryWrap(at) {
@@ -530,10 +585,16 @@ export function createGuard(ctx, options, log) {
         await sendWrap(target.id, options.wrapPhrase)
         occurrence.sent.add(workspace)
         log(`[wrap] sent "${options.wrapPhrase}" to ${target.id} (workspace ${workspace || '(none)'})`)
+        record('wrap-sent', {
+          sessionId: target.id,
+          workspace,
+          phrase: options.wrapPhrase,
+        })
       } catch (error) {
         occurrence.phase = 'done'
         occurrence.outcome = 'wrap-failed'
         log(`[wrap] failed for ${target.id}: ${String(error)}`)
+        record('wrap-failed', { sessionId: target.id, workspace, error: String(error) })
         return
       }
     }
@@ -575,9 +636,11 @@ export function createGuard(ctx, options, log) {
           occurrence.phase = 'done'
           occurrence.outcome = 'reminder-only'
           log('[lead] peak started and no running task required a wrap-up')
+          record('peak-started', { outcome: 'reminder-only' })
         } else if (at - occurrence.lastCheckAt >= options.recheckMinutes * MINUTE) {
           occurrence.lastCheckAt = at
           const running = runningEntries()
+          record('check', { running: running.map((entry) => ({ id: entry.id, cwd: entry.cwd })) })
           if (running.length > 0) {
             occurrence.phase = 'confirm'
             occurrence.confirmUntil = at + options.confirmMinutes * MINUTE
@@ -586,6 +649,10 @@ export function createGuard(ctx, options, log) {
               `[lead] ${running.length} session(s) running; countdown until ` +
                 `${new Date(occurrence.confirmUntil).toISOString()}`,
             )
+            record('countdown-start', {
+              confirmUntil: new Date(occurrence.confirmUntil).toISOString(),
+              workspaces: [...occurrence.workspaces],
+            })
           } else {
             log('[lead] still nothing running; banner stays')
           }
@@ -594,6 +661,7 @@ export function createGuard(ctx, options, log) {
         occurrence.phase = 'waitIdle'
         occurrence.outcome = 'waiting-for-idle'
         log('[confirm] no confirmation before the countdown ended: waiting for every session to go idle')
+        record('wait-idle')
         void tryWrap(at)
       } else if (occurrence.phase === 'waitIdle' && at - occurrence.lastTryAt >= 5_000) {
         occurrence.lastTryAt = at
@@ -619,6 +687,7 @@ export function createGuard(ctx, options, log) {
       minutesToPeak: next === undefined ? null : Math.max(0, Math.round((next - at) / MINUTE)),
       leadMinutes: options.leadMinutes,
       wrapPhrase: options.wrapPhrase,
+      historyFile: historyPath,
       occurrence:
         occurrence === null
           ? null
@@ -665,6 +734,7 @@ export function createGuard(ctx, options, log) {
     occurrence.phase = 'done'
     occurrence.outcome = 'confirmed-by-user'
     log('[confirm] user confirmed: auto wrap-up cancelled')
+    record('confirmed')
     return { confirmed: true }
   }
 
@@ -674,6 +744,7 @@ export function createGuard(ctx, options, log) {
     suppressedPeakAt = occurrence.peakAt
     occurrence = null
     log('[cancel] current occurrence suppressed; no wrap-up will be sent for this peak')
+    record('cancelled', { peakAt: new Date(suppressedPeakAt).toISOString() })
     return { cancelled: true, peakAt: new Date(suppressedPeakAt).toISOString() }
   }
 
@@ -698,6 +769,7 @@ export function createGuard(ctx, options, log) {
   function start() {
     const disposers = []
     if (!scanAgents()) log('agents service not ready yet; will retry on the next tick')
+    record('started', { profiles: options.profileIds })
     disposers.push(
       ctx.on('agent/created', ({ agent }) => {
         remember(agent)
@@ -765,6 +837,14 @@ export function createGuard(ctx, options, log) {
           }
           const url = new URL(request.url ?? '/', 'http://localhost')
           const route = url.pathname.slice('/peak-guard'.length) || '/'
+          if (route === '/history' && request.method === 'GET') {
+            const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit')) || 50))
+            sendJson(response, 200, {
+              file: historyPath,
+              items: historyItems(limit),
+            })
+            return
+          }
           if (route === '/state' && request.method === 'GET') {
             sendJson(response, 200, statePayload())
             return
@@ -872,6 +952,7 @@ export function createGuard(ctx, options, log) {
     statePayload,
     confirmNow,
     cancelOccurrence,
+    historyItems,
     /** Shift the simulated clock by `minutes` from the real clock (tests, dry runs). */
     setClockOffset(minutes) {
       clock.offsetMinutes = minutes

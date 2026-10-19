@@ -27,3 +27,5 @@
 ### 新增（调试）
 
 - `POST /peak-guard/cancel`：取消本轮，不再提醒也不代发。
+- 审计日志：关键动作追加到 `~/.dsh/peak-guard/events.jsonl`，
+  `GET /peak-guard/history?limit=N` 可查最近记录。

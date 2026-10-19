@@ -96,6 +96,17 @@ dsh plugin --profile <你的profile> add ./dsh-peak-guard
 | `POST /peak-guard/reset` | 清空当前这一轮状态 |
 | `POST /peak-guard/cancel` | 取消本轮（本轮不再提醒、不代发） |
 | `POST /peak-guard/check {"sessionId": "..."}` | 查一个会话当前累计 token 与是否会被拦截 |
+| `GET /peak-guard/history?limit=50` | 查审计日志（最近 N 条） |
+
+## 审计日志
+
+插件会把关键动作追加到 `~/.dsh/peak-guard/events.jsonl`（一行一个 JSON），
+包括：启动、进入峰前窗口、每 5 分钟检查、进入倒计时、确认、取消、
+等空闲、代发成功/失败、峰价开始、拦截。
+
+- 文件超过 512 KB 时轮转一次，保留上一份为 `events.jsonl.1`；
+- `history: false` 可关闭写日志（测试用）；
+- 换机器/换 profile 时日志跟着 `DSH_HOME` 走。
 
 测试：
 

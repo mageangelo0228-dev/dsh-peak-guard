@@ -7,7 +7,8 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { createGuard, readOptions } from '../index.js'
@@ -87,6 +88,7 @@ const OPTIONS = {
   recheckMinutes: 5,
   confirmMinutes: 10,
   wrapPhrase: '今天先到这里，现在收工',
+  history: false,
 }
 
 function twoRunningSessions() {
@@ -265,6 +267,28 @@ test('cancelling suppresses this peak entirely', { skip: !schedule }, async () =
 
   await settle()
   assert.equal(host.prompts.length, 0)
+})
+
+test('audit log records the occurrence', { skip: !schedule }, async () => {
+  const previous = process.env.DSH_HOME
+  const dir = mkdtempSync(join(tmpdir(), 'peak-guard-'))
+  process.env.DSH_HOME = dir
+  try {
+    const { sessions, agents } = twoRunningSessions()
+    const host = makeHost({ sessions, agents, profiles: [{ id: 'deepseek-v4', schedule }] })
+    const guard = createGuard(host.ctx, readOptions({ ...OPTIONS, history: true }), () => {})
+    guard.start()
+    guard.setClockOffset(offsetTo(beijing('2026-10-19T08:30:00')))
+    guard.tick()
+
+    const items = guard.historyItems(20)
+    assert.ok(items.some((item) => item.type === 'started'))
+    assert.ok(items.some((item) => item.type === 'occurrence-start'))
+  } finally {
+    if (previous === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previous
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('weekend: no reminder at all', { skip: !schedule }, async () => {
