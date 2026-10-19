@@ -64,6 +64,8 @@ dsh plugin --profile <你的profile> add ./dsh-peak-guard
 | `blockLongConversations` | `false` | 拦截开关，默认只提醒 |
 | `clockOffsetMinutes` | `0` | 模拟时钟（调试用），0 = 真实时间 |
 | `profileIds` | `[deepseek-v4]` | 监控的峰谷档位 id，按顺序取第一个存在的 |
+| `history` | `true` | 是否写审计日志 |
+| `historyLimit` | `30` | 审计日志只保留最近多少条 |
 
 ## 工作方式
 
@@ -104,7 +106,7 @@ dsh plugin --profile <你的profile> add ./dsh-peak-guard
 包括：启动、进入峰前窗口、每 5 分钟检查、进入倒计时、确认、取消、
 等空闲、代发成功/失败、峰价开始、拦截。
 
-- 文件超过 512 KB 时轮转一次，保留上一份为 `events.jsonl.1`；
+- **只保留最近 `historyLimit` 条（默认 30 条）**，更早的自动丢弃，不会无限增长；
 - `history: false` 可关闭写日志（测试用）；
 - 换机器/换 profile 时日志跟着 `DSH_HOME` 走。
 

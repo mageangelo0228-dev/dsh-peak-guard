@@ -291,6 +291,32 @@ test('audit log records the occurrence', { skip: !schedule }, async () => {
   }
 })
 
+test('audit log keeps only historyLimit entries', { skip: !schedule }, async () => {
+  const previous = process.env.DSH_HOME
+  const dir = mkdtempSync(join(tmpdir(), 'peak-guard-cap-'))
+  process.env.DSH_HOME = dir
+  try {
+    const { sessions, agents } = twoRunningSessions()
+    const host = makeHost({ sessions, agents, profiles: [{ id: 'deepseek-v4', schedule }] })
+    const guard = createGuard(
+      host.ctx,
+      readOptions({ ...OPTIONS, history: true, historyLimit: 1 }),
+      () => {},
+    )
+    guard.start()
+    guard.setClockOffset(offsetTo(beijing('2026-10-19T08:30:00')))
+    guard.tick()
+
+    const items = guard.historyItems(10)
+    assert.equal(items.length, 1)
+    assert.equal(items[0].type, 'occurrence-start')
+  } finally {
+    if (previous === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previous
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('weekend: no reminder at all', { skip: !schedule }, async () => {
   const { sessions, agents } = twoRunningSessions()
   const host = makeHost({ sessions, agents, profiles: [{ id: 'deepseek-v4', schedule }] })

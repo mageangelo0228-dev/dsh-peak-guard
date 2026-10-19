@@ -17,7 +17,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { appendFileSync, mkdirSync, readFileSync, statSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -38,6 +38,7 @@ export const DEFAULTS = Object.freeze({
   clockOffsetMinutes: 0,
   profileIds: ['deepseek-v4'],
   history: true,
+  historyLimit: 30,
 })
 
 const NUMBER_FIELDS = Object.freeze([
@@ -46,6 +47,7 @@ const NUMBER_FIELDS = Object.freeze([
   'confirmMinutes',
   'blockTokens',
   'clockOffsetMinutes',
+  'historyLimit',
 ])
 
 function pickNumber(raw, key, fallback) {
@@ -386,27 +388,21 @@ export function createGuard(ctx, options, log) {
   const now = () => Date.now() + clock.offsetMinutes * MINUTE
 
   const historyPath = options.history === false ? null : resolveHistoryPath()
+  const historyLimit = Math.min(500, Math.max(1, Math.round(options.historyLimit ?? 30)))
 
-  /** Append one audit line; logging must never break the guard. */
+  /** Append one audit line and keep only the newest `historyLimit` entries. */
   function record(type, data = {}) {
     if (historyPath === null) return
     try {
       mkdirSync(dirname(historyPath), { recursive: true })
-      if (statSync(historyPath, { throwIfNoEntry: false })?.size > 512 * 1024) {
-        // keep the log bounded: rotate once, keep the previous file
-        try {
-          const previous = readFileSync(historyPath, 'utf8').split('\n').slice(-1000).join('\n')
-          appendFileSync(`${historyPath}.1`, previous, 'utf8')
-        } catch {
-          // ignore rotation failures
-        }
-        appendFileSync(historyPath, '', 'utf8')
+      let lines = []
+      try {
+        lines = readFileSync(historyPath, 'utf8').split('\n').filter(Boolean)
+      } catch {
+        lines = []
       }
-      appendFileSync(
-        historyPath,
-        `${JSON.stringify({ at: new Date(now()).toISOString(), type, ...data })}\n`,
-        'utf8',
-      )
+      lines.push(JSON.stringify({ at: new Date(now()).toISOString(), type, ...data }))
+      writeFileSync(`${historyPath}`, `${lines.slice(-historyLimit).join('\n')}\n`, 'utf8')
     } catch {
       // never break the guard for a log line
     }
@@ -688,6 +684,7 @@ export function createGuard(ctx, options, log) {
       leadMinutes: options.leadMinutes,
       wrapPhrase: options.wrapPhrase,
       historyFile: historyPath,
+      historyLimit,
       occurrence:
         occurrence === null
           ? null

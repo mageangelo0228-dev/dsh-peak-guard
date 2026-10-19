@@ -22,6 +22,9 @@
         # Auto wrap-up phrase, sent as a user message once every top-level
         # session in that workspace is idle.
         wrapPhrase: '今天先到这里，现在收工'
+        # Audit trail (~/.dsh/peak-guard/events.jsonl): keep the newest N lines.
+        history: true
+        historyLimit: 30
         # Block a conversation during peak hours once its cumulative token
         # usage reaches this threshold.
         blockTokens: 2000000
