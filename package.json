@@ -1,6 +1,6 @@
 {
   "name": "dsh-peak-guard",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "type": "module",
   "description": "Peak-price guard for DeepSeek Harness (功能未经过充分测试 / not fully tested yet): remind before peak pricing, auto-send the workspace wrap-up phrase once every session there is idle, and block over-long conversations during peak hours.",
   "main": "index.js",
