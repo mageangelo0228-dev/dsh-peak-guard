@@ -143,7 +143,7 @@ window.__ModuleLoader__.load({
       const [doneShownAt, setDoneShownAt] = useState(0)
       const occurrence = snapshot?.data?.occurrence ?? null
       const phase = occurrence?.phase ?? null
-      useTicker(phase === 'confirm' || phase === 'recheck')
+      useTicker(phase === 'confirm' || phase === 'lead')
 
       useEffect(() => {
         if (phase !== 'done') {
@@ -205,17 +205,18 @@ window.__ModuleLoader__.load({
           label: text('知道了', 'dismiss'),
           onClick: () => setHidden(true),
         })
-      } else if (phase === 'recheck') {
-        const remaining = peakClock === '' ? '' : formatAgo(Date.parse(occurrence.peakAt) - virtualNow)
+      } else if (phase === 'lead') {
+        const remaining =
+          peakClock === '' ? '' : formatAgo(Date.parse(occurrence.peakAt) - virtualNow)
         body = frag(
-          text('峰价马上开始', 'Peak pricing is about to start'),
-          ' ',
+          text('还有 ', 'in '),
+          strong(remaining || '--:--'),
+          text(' 进入峰价 ', ' until peak pricing at '),
           strong(peakClock),
-          remaining !== '' ? ` · ${remaining}` : '',
           ' · ',
           text(
-            '检查中：还有任务在跑，稍后把你叫回来',
-            'checking: a task is still running, you will be asked again',
+            '每 5 分钟检查一次，有任务在跑会提醒你收尾',
+            'checked every 5 minutes; you will be asked to wrap up if a task is running',
           ),
         )
       } else if (phase === 'confirm') {
@@ -295,7 +296,10 @@ window.__ModuleLoader__.load({
           )
         } else {
           dot = TOKENS.warn
-          body = text('峰价即将开始：本次只提醒，不代发', 'Peak pricing is coming: reminder only this time')
+          body = text(
+            '峰价已经开始：本次只提醒，没有代发',
+            'Peak pricing has started: reminder only this time',
+          )
         }
         action = React.createElement(Button, {
           label: text('知道了', 'dismiss'),

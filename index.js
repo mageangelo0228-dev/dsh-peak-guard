@@ -373,6 +373,7 @@ export function createGuard(ctx, options, log) {
   const agents = new Map()
   let profile
   let occurrence = null
+  let suppressedPeakAt = null
   let timer
 
   const now = () => Date.now() + clock.offsetMinutes * MINUTE
@@ -498,24 +499,21 @@ export function createGuard(ctx, options, log) {
   }
 
   function startOccurrence(peakAt, at) {
-    const running = runningEntries()
-    const workspaces = [...new Set(running.map((entry) => entry.cwd))]
     occurrence = {
       peakAt,
-      phase: running.length > 0 ? 'recheck' : 'done',
-      outcome: running.length > 0 ? undefined : 'reminder-only',
+      phase: 'lead',
+      outcome: undefined,
       createdAt: at,
-      recheckAt: at + options.recheckMinutes * MINUTE,
+      lastCheckAt: at,
       confirmUntil: undefined,
-      workspaces,
+      workspaces: [...new Set(runningEntries().map((entry) => entry.cwd))],
       sent: new Set(),
       lastTryAt: 0,
     }
     log(
-      `[reminder] peak starts at ${new Date(peakAt).toISOString()} — ` +
-        `${running.length} running session(s) in ${workspaces.length} workspace(s)`,
+      `[lead] peak starts at ${new Date(peakAt).toISOString()} — banner stays until then, ` +
+        `run check every ${options.recheckMinutes} minute(s)`,
     )
-    if (running.length === 0) log('[reminder] nothing running: reminder only, no wrap-up')
   }
 
   async function tryWrap(at) {
@@ -550,6 +548,7 @@ export function createGuard(ctx, options, log) {
   function tick() {
     try {
       const at = now()
+      if (agents.size === 0) scanAgents()
       if (profile === undefined) refreshProfile()
       if (profile === undefined) return
       const schedule = profile.schedule
@@ -565,24 +564,31 @@ export function createGuard(ctx, options, log) {
       ) {
         occurrence = null
       }
-      if (occurrence === null && next !== undefined) {
+      if (suppressedPeakAt !== null && at > suppressedPeakAt) suppressedPeakAt = null
+      if (occurrence === null && next !== undefined && next !== suppressedPeakAt) {
         const ahead = next - at
         if (ahead > 0 && ahead <= options.leadMinutes * MINUTE) startOccurrence(next, at)
       }
       if (occurrence === null) return
-      if (occurrence.phase === 'recheck' && at >= occurrence.recheckAt) {
-        const running = runningEntries().filter((entry) => occurrence.workspaces.includes(entry.cwd))
-        if (running.length === 0) {
+      if (occurrence.phase === 'lead') {
+        if (at >= occurrence.peakAt) {
           occurrence.phase = 'done'
-          occurrence.outcome = 'finished-before-recheck'
-          log('[recheck] everything finished: reminder only, no wrap-up')
-        } else {
-          occurrence.phase = 'confirm'
-          occurrence.confirmUntil = at + options.confirmMinutes * MINUTE
-          log(
-            `[recheck] still running (${running.length}); countdown until ` +
-              `${new Date(occurrence.confirmUntil).toISOString()}`,
-          )
+          occurrence.outcome = 'reminder-only'
+          log('[lead] peak started and no running task required a wrap-up')
+        } else if (at - occurrence.lastCheckAt >= options.recheckMinutes * MINUTE) {
+          occurrence.lastCheckAt = at
+          const running = runningEntries()
+          if (running.length > 0) {
+            occurrence.phase = 'confirm'
+            occurrence.confirmUntil = at + options.confirmMinutes * MINUTE
+            occurrence.workspaces = [...new Set(running.map((entry) => entry.cwd))]
+            log(
+              `[lead] ${running.length} session(s) running; countdown until ` +
+                `${new Date(occurrence.confirmUntil).toISOString()}`,
+            )
+          } else {
+            log('[lead] still nothing running; banner stays')
+          }
         }
       } else if (occurrence.phase === 'confirm' && at >= occurrence.confirmUntil) {
         occurrence.phase = 'waitIdle'
@@ -620,10 +626,10 @@ export function createGuard(ctx, options, log) {
               peakAt: new Date(occurrence.peakAt).toISOString(),
               phase: occurrence.phase,
               outcome: occurrence.outcome ?? null,
-              recheckAt:
-                occurrence.recheckAt === undefined
+              nextCheckAt:
+                occurrence.lastCheckAt === undefined
                   ? null
-                  : new Date(occurrence.recheckAt).toISOString(),
+                  : new Date(occurrence.lastCheckAt + options.recheckMinutes * MINUTE).toISOString(),
               confirmUntil:
                 occurrence.confirmUntil === undefined
                   ? null
@@ -662,24 +668,36 @@ export function createGuard(ctx, options, log) {
     return { confirmed: true }
   }
 
-  function start() {
-    const disposers = []
-    const agentsService = (() => {
+  /** Suppress the current occurrence: no countdown, no auto wrap-up for this peak. */
+  function cancelOccurrence() {
+    if (occurrence === null) return { cancelled: false, reason: 'no-occurrence' }
+    suppressedPeakAt = occurrence.peakAt
+    occurrence = null
+    log('[cancel] current occurrence suppressed; no wrap-up will be sent for this peak')
+    return { cancelled: true, peakAt: new Date(suppressedPeakAt).toISOString() }
+  }
+
+  /** Scan live agents once the service exists; safe to retry. */
+  function scanAgents() {
+    const service = (() => {
       try {
         return ctx.get('agents')
       } catch {
         return undefined
       }
     })()
-    if (agentsService === undefined) {
-      log('agents service unavailable: guard stays idle')
-      return () => {}
-    }
+    if (service === undefined) return false
     try {
-      for (const agent of agentsService.list()) remember(agent)
+      for (const agent of service.list()) remember(agent)
     } catch (error) {
       log(`initial agent scan failed: ${String(error)}`)
     }
+    return true
+  }
+
+  function start() {
+    const disposers = []
+    if (!scanAgents()) log('agents service not ready yet; will retry on the next tick')
     disposers.push(
       ctx.on('agent/created', ({ agent }) => {
         remember(agent)
@@ -767,6 +785,10 @@ export function createGuard(ctx, options, log) {
             sendJson(response, 200, { reset: true })
             return
           }
+          if (route === '/cancel' && request.method === 'POST') {
+            sendJson(response, 200, cancelOccurrence())
+            return
+          }
           if (route === '/check' && request.method === 'POST') {
             const body = await readBody(request)
             if (profile === undefined) refreshProfile()
@@ -849,6 +871,7 @@ export function createGuard(ctx, options, log) {
     tick,
     statePayload,
     confirmNow,
+    cancelOccurrence,
     /** Shift the simulated clock by `minutes` from the real clock (tests, dry runs). */
     setClockOffset(minutes) {
       clock.offsetMinutes = minutes

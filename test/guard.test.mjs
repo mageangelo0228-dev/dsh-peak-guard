@@ -1,4 +1,4 @@
-﻿/**
+/**
  * State-machine tests: reminder -> re-check -> countdown -> wait for idle ->
  * one wrap-up command per workspace.
  *
@@ -101,14 +101,14 @@ function twoRunningSessions() {
   return { sessions, agents }
 }
 
-test('full path: reminder -> recheck -> countdown -> wrap once after all idle', { skip: !schedule }, async () => {
+test('full path: lead banner -> countdown -> wrap once after all idle', { skip: !schedule }, async () => {
   const { sessions, agents } = twoRunningSessions()
   const host = makeHost({ sessions, agents, profiles: [{ id: 'deepseek-v4', schedule }] })
   const guard = makeGuard(host, OPTIONS)
 
   guard.setClockOffset(offsetTo(beijing('2026-10-19T08:30:00')))
   guard.tick()
-  assert.equal(guard.statePayload().occurrence.phase, 'recheck')
+  assert.equal(guard.statePayload().occurrence.phase, 'lead')
   assert.equal(host.prompts.length, 0)
 
   guard.setClockOffset(offsetTo(beijing('2026-10-19T08:36:00')))
@@ -171,12 +171,13 @@ test('nothing running: reminder only, no wrap-up', { skip: !schedule }, async ()
   guard.setClockOffset(offsetTo(beijing('2026-10-19T08:30:00')))
   guard.tick()
   const state = guard.statePayload().occurrence
-  assert.equal(state.phase, 'done')
-  assert.equal(state.outcome, 'reminder-only')
+  assert.equal(state.phase, 'lead')
+  assert.equal(state.outcome, null)
 
-  guard.setClockOffset(offsetTo(beijing('2026-10-19T10:00:00')))
+  guard.setClockOffset(offsetTo(beijing('2026-10-19T09:05:00')))
   guard.tick()
   await settle()
+  assert.equal(guard.statePayload().occurrence.outcome, 'reminder-only')
   assert.equal(host.prompts.length, 0)
 })
 
@@ -220,8 +221,50 @@ test('subagent sessions never trigger or receive a wrap-up', { skip: !schedule }
 
   guard.setClockOffset(offsetTo(beijing('2026-10-19T08:30:00')))
   guard.tick()
-  assert.equal(guard.statePayload().occurrence.phase, 'done')
+  assert.equal(guard.statePayload().occurrence.phase, 'lead')
   assert.equal(guard.statePayload().sessions.length, 0)
+})
+
+test('a task that starts mid-window is caught by the next 5-minute check', { skip: !schedule }, async () => {
+  const sessions = new Map([['s1', { id: 's1', header: { cwd: 'E:\\ds' } }]])
+  const agents = new Map([['s1', { id: 's1', status: 'idle' }]])
+  const host = makeHost({ sessions, agents, profiles: [{ id: 'deepseek-v4', schedule }] })
+  const guard = makeGuard(host, OPTIONS)
+
+  guard.setClockOffset(offsetTo(beijing('2026-10-19T08:30:00')))
+  guard.tick()
+  assert.equal(guard.statePayload().occurrence.phase, 'lead')
+
+  // 08:36 check: still nothing running, banner stays.
+  guard.setClockOffset(offsetTo(beijing('2026-10-19T08:36:00')))
+  guard.tick()
+  assert.equal(guard.statePayload().occurrence.phase, 'lead')
+
+  // A task starts at 08:44; the 08:46 check must catch it.
+  host.ctx.emit('agent/status', { agent: { id: 's1' }, status: 'running' })
+  guard.setClockOffset(offsetTo(beijing('2026-10-19T08:46:00')))
+  guard.tick()
+  assert.equal(guard.statePayload().occurrence.phase, 'confirm')
+})
+
+test('cancelling suppresses this peak entirely', { skip: !schedule }, async () => {
+  const { sessions, agents } = twoRunningSessions()
+  const host = makeHost({ sessions, agents, profiles: [{ id: 'deepseek-v4', schedule }] })
+  const guard = makeGuard(host, OPTIONS)
+
+  guard.setClockOffset(offsetTo(beijing('2026-10-19T08:40:00')))
+  guard.tick()
+  assert.equal(guard.statePayload().occurrence.phase, 'lead')
+  assert.equal(guard.cancelOccurrence().cancelled, true)
+  assert.equal(guard.statePayload().occurrence, null)
+
+  // Still within the lead window, but suppression keeps the banner away.
+  guard.setClockOffset(offsetTo(beijing('2026-10-19T08:50:00')))
+  guard.tick()
+  assert.equal(guard.statePayload().occurrence, null)
+
+  await settle()
+  assert.equal(host.prompts.length, 0)
 })
 
 test('weekend: no reminder at all', { skip: !schedule }, async () => {
